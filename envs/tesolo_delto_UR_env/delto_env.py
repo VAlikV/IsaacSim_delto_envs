@@ -19,8 +19,6 @@ from isaaclab.sim import PhysxCfg, SimulationCfg
 from isaaclab.sim.spawners.materials.physics_materials_cfg import RigidBodyMaterialCfg
 from isaaclab.sensors import ContactSensorCfg, ContactSensor
 
-from isaaclab.sim.schemas import modify_articulation_root_properties
-
 # from isaaclab.utils.math import quat_to_rot_mats
 from isaaclab.utils.math import quat_apply
 
@@ -105,26 +103,26 @@ class DeltoEnvCfg(DirectRLEnvCfg):
 
     # ======================================================================= sensors
 
-    fingers_names = [
-        "rl_dg_1_4_01/rl_dg_1_tip",
-        "rl_dg_2_4/rl_dg_2_tip",
-        "rl_dg_3_4/rl_dg_3_tip",
-        "rl_dg_4_4/rl_dg_4_tip",
-        "rl_dg_5_4/rl_dg_5_tip",
+    ft_names = [
+        "rl_dg_1_4",
+        "rl_dg_2_4",
+        "rl_dg_3_4",
+        "rl_dg_4_4",
+        "rl_dg_5_4",
     ]
 
-    ft_names = [
-        "rl_dg_1_tip",
-        "rl_dg_2_tip",
-        "rl_dg_3_tip",
-        "rl_dg_4_tip",
-        "rl_dg_5_tip",
-    ]
+    # fingers_names = [
+    #     "rl_dg_1_4/rl_dg_1_tip",
+    #     "rl_dg_2_4/rl_dg_2_tip",
+    #     "rl_dg_3_4/rl_dg_3_tip",
+    #     "rl_dg_4_4/rl_dg_4_tip",
+    #     "rl_dg_5_4/rl_dg_5_tip",
+    # ]
 
     contact_sensors = {}
-    for name in fingers_names:
+    for name in ft_names:
         contact_sensors[name] = ContactSensorCfg(
-            prim_path=f"/World/envs/env_.*/Robot/{name}",
+            prim_path=f"/World/envs/env_.*/Robot/dg5f_my/{name}",
             update_period=0.0,
             history_length=1,
             debug_vis=False,
@@ -136,22 +134,24 @@ class DeltoEnvCfg(DirectRLEnvCfg):
 
     # in-manipulator object
     object_cfg: RigidObjectCfg = RigidObjectCfg(
-            prim_path="/World/envs/env_.*/Object",
-            spawn=sim_utils.UsdFileCfg(
-                # usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/YCB/Axis_Aligned/035_power_drill.usd",
-                # usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mugs/SM_Mug_D1.usd",
-                usd_path="robots/objects/Mug.usd",
-                rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                    disable_gravity=False,
-                    retain_accelerations=True,
-                    max_depenetration_velocity=1000.0,
-                ),
+        prim_path="/World/envs/env_.*/Object",  # один куб на среду
+        spawn=sim_utils.CylinderCfg(  # используем Box вместо Cone
+            radius=0.03,  # кубик 10 см
+            height=0.15,
+            axis="Z",
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.3),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(1.0, 0.0, 0.0),  # красный
+                metallic=0.1,
             ),
-            init_state=RigidObjectCfg.InitialStateCfg(
-                pos=(0.32, -1.2, 0.1),
-                # pos=(0.22, -1.0, 0.1),
-            ),
-        )
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(
+            pos=(0.24, -0.80, 0.1),
+            # pos=(0.22, -1.0, 0.1),
+        ),
+    )
     
     table_cfg: RigidObjectCfg = RigidObjectCfg(
             prim_path="/World/envs/env_.*/Table",  # один куб на среду
@@ -218,7 +218,7 @@ class DeltoEnv(DirectRLEnv):
 
         # self.ft_ids = [self.hand.body_names.index(n) for n in self.cfg.ft_names]
         
-        # self.object = self.scene.rigid_objects["object"]
+        self.object = self.scene.rigid_objects["object"]
         self.table = self.scene.rigid_objects["table"]
 
         self.action_scale = self.cfg.action_scale
@@ -245,16 +245,11 @@ class DeltoEnv(DirectRLEnv):
         self.hand = Articulation(self.cfg.robot_cfg)
         self.scene.articulations["hand"] = self.hand
 
-        # self.object = RigidObject(self.cfg.object_cfg)
-        # self.scene.rigid_objects["object"] = self.object
+        self.object = RigidObject(self.cfg.object_cfg)
+        self.scene.rigid_objects["object"] = self.object
 
         self.table = RigidObject(self.cfg.table_cfg)
         self.scene.rigid_objects["table"] = self.table
-
-        # modify_articulation_root_properties(
-        #     "/World/envs/env_0/Robot",   # ваш корневой путь спавна
-        #     sim_utils.ArticulationRootPropertiesCfg()
-        # )
 
         self.scene.clone_environments(copy_from_source=False)
 
@@ -267,8 +262,10 @@ class DeltoEnv(DirectRLEnv):
         # self.force_thresh = 1.0  # Н
         # self.ema = 0.9               # сглаживание флагов/сил, чтобы не мигало
 
-        # for name in self.cfg.ft_names:
-        #     self.scene.sensors[name] = ContactSensor(self.cfg.contact_sensors[name])    # доступ: self.scene.sensors["robot0_ffdistal"]
+        # print(self.cfg.contact_sensors)
+
+        for name in self.cfg.ft_names:
+            self.scene.sensors[name] = ContactSensor(self.cfg.contact_sensors[name])    # доступ: self.scene.sensors["robot0_ffdistal"]
 
 # =====================================================================================================
 
@@ -287,11 +284,19 @@ class DeltoEnv(DirectRLEnv):
 
     def _get_observations(self):
 
+        object_pos = self.object.data.body_link_pose_w[:,0,:3]
+        object_pos -= self.env_origins
+        object_quat = self.object.data.body_link_pose_w[:,0,3:]
+
+        Fw, flags = self._read_contacts(threshold=1.0, frame="w")  # силы и флаги в world frame
         obs = {
             "joints_pos": self.joint_pos,
             "joints_vel": self.joint_vel,
+            "contact_forces_w": Fw,   # (N,5,3)
+            "contact_flags": flags,   # (N,5) True/False
+            "object_pos": object_pos,
+            "object_quat": object_quat
         }
-
         return {"state": obs}
     
 # =====================================================================================================
@@ -331,3 +336,54 @@ class DeltoEnv(DirectRLEnv):
             self.arm_goal[env_ids]  = self.arm_start[env_ids] + delta
 
         self.hand.set_joint_position_target(self.arm_start[env_ids], joint_ids=self.arm_joint_ids, env_ids=env_ids)
+
+    
+# ===========================================================================
+# ===========================================================================
+# ===========================================================================
+
+    def _read_contact_forces(self, frame: str = "w") -> torch.Tensor:
+        """
+        Возвращает тензор сил контакта размера (num_envs, num_fingers, 3).
+        frame: 'w' — в мировых координатах, 'b' — в body frame (локально для линка).
+        """
+        assert frame in ("w", "b")
+        forces_per_finger = []
+        attr = f"net_forces_{frame}"
+
+        for name in self.cfg.ft_names:
+            s = self.scene.sensors[name]
+            f = getattr(s.data, attr)  # shape: (N, 3) или (N, H, 3) при history_length>1
+            if f.ndim == 3:
+                f = f[:, -1, :]  # берём последний сэмпл истории
+            forces_per_finger.append(f)
+
+        return torch.stack(forces_per_finger, dim=1)  # (N, 5, 3)
+    
+
+    def _read_contact_flags(
+        self,
+        threshold: float = 1.0,
+        frame: str = "w",
+    ) -> torch.Tensor:
+        """
+        Булевы флаги контакта (norm(force) > threshold) размера (num_envs, num_fingers).
+        threshold — порог в Ньютонах.
+        """
+        F = self._read_contact_forces(frame=frame)          # (N, 5, 3)
+        norms = torch.linalg.norm(F, dim=-1)                # (N, 5)
+        return norms > threshold
+    
+
+    def _read_contacts(
+        self,
+        threshold: float = 1.0,
+        frame: str = "w",
+    ):
+        """
+        Удобный комбинированный вызов: возвращает (forces, flags)
+        forces: (N, 5, 3), flags: (N, 5)
+        """
+        F = self._read_contact_forces(frame=frame)
+        flags = torch.linalg.norm(F, dim=-1) > threshold
+        return F, flags

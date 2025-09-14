@@ -54,11 +54,9 @@ if __name__ == "__main__":
 
     obs, rewards, dones, info, _ = env.step(start)
 
-    # order = ["WRJ1","WRJ0","FFJ3","MFJ3","RFJ3","LFJ4","THJ4","FFJ2","MFJ2","RFJ2","LFJ3","THJ3","FFJ1","MFJ1","RFJ1","LFJ2","THJ2","LFJ1","THJ1","THJ0"]
-
-    pos = torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -2.0, 0.0,
-          0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0,
-          -1.0, 0.0, -3.0, -3.0]])
+    # pos = torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -2.0, 0.0,
+    #       0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0,
+    #       -1.0, 0.0, -3.0, -3.0]])
     
     pos = torch.zeros([env.cfg.num_env, env.cfg.action_space])*0.3
 
@@ -81,7 +79,7 @@ if __name__ == "__main__":
 
         obs, rewards, dones, info, _ = env.step(pos)
 
-        print("Obs: ", obs)
+        print("Obs: ", obs["state"]["object_pos"])
 
         # print("Joints_pose:", obs["state"]["joints_pos"])
         print("====================================")
