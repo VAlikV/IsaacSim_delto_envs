@@ -98,6 +98,7 @@ class DeltoEnvCfg(DirectRLEnvCfg):
         "rj_dg_5_4"
     ]
 
+    hand_position = [30, 0, 0, 0, 0, -50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     start_position = [-90.0, -75.0, 120.0, -50.0, 90.0, -90.0]
     lift_delta_deg = [-0.0, -20.0, 0.0, -20.0, 0.0, 0.0]
 
@@ -140,6 +141,7 @@ class DeltoEnvCfg(DirectRLEnvCfg):
             height=0.15,
             axis="Z",
             rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+            physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=2.0),
             mass_props=sim_utils.MassPropertiesCfg(mass=0.3),
             collision_props=sim_utils.CollisionPropertiesCfg(),
             visual_material=sim_utils.PreviewSurfaceCfg(
@@ -148,7 +150,7 @@ class DeltoEnvCfg(DirectRLEnvCfg):
             ),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.24, -0.80, 0.1),
+            pos=(0.23, -0.83, 0.1),
             # pos=(0.22, -1.0, 0.1),
         ),
     )
@@ -209,22 +211,43 @@ class DeltoEnv(DirectRLEnv):
 
         N = self.scene.num_envs
 
+        self.action_scale = self.cfg.action_scale
+
         self.env_origins = self.scene.env_origins
+
+        # -------------------------------------------
 
         self.hand = self.scene.articulations["hand"]
 
         self.hand_joint_ids, _ = self.hand.find_joints(cfg.hand_joint_names)
         self.arm_joint_ids, _ = self.hand.find_joints(cfg.arm_joint_names)
-
-        # self.ft_ids = [self.hand.body_names.index(n) for n in self.cfg.ft_names]
+        self.ft_ids = [self.hand.body_names.index(n) for n in self.cfg.ft_names]
         
         self.object = self.scene.rigid_objects["object"]
         self.table = self.scene.rigid_objects["table"]
 
-        self.action_scale = self.cfg.action_scale
+        # -------------------------------------------
 
         self.joint_pos = self.hand.data.joint_pos
         self.joint_vel = self.hand.data.joint_vel   
+
+        # -------------------------------------------
+
+        self.contact_treshold = 2.0
+
+        self.hold_count = torch.zeros(N, dtype=torch.long, device=self.device)
+
+        self.phase = torch.zeros(N, dtype=torch.long, device=self.device)
+        self.phase_step = torch.zeros(N, dtype=torch.long, device=self.device)
+
+        self.lift_hold_ok = torch.zeros(N, dtype=torch.long, device=self.device)
+        self.grasp_ok_counter = torch.zeros(N, dtype=torch.long, device=self.device)
+        self.slip_counter = torch.zeros(N, dtype=torch.long, device=self.device)
+
+        # -------------------------------------------
+
+        # хранение "замороженных" целевых поз пальцев на фазу подъёма
+        self.saved_grasp_targets = torch.zeros(N, len(self.hand_joint_ids), device=self.device)
 
         # линейная траектория для сустава руки во время подъема
         self.arm_start = torch.zeros(N, len(self.arm_joint_ids), device=self.device)
@@ -235,6 +258,7 @@ class DeltoEnv(DirectRLEnv):
             delta = torch.tensor(self.cfg.lift_delta_deg, device=self.device) * torch.pi/180.0
             self.arm_goal = self.arm_start + delta
 
+        self.scripted_lift_enabled = True
 
 # =====================================================================================================
 
@@ -278,7 +302,38 @@ class DeltoEnv(DirectRLEnv):
 
     def _apply_action(self):
         # --- контакт/геометрия для фазовой машины
-        self.hand.set_joint_position_target(self.actions, joint_ids=self.hand_joint_ids)
+        fforce, flags, fpose = self._read_contacts(threshold=self.contact_treshold, frame="w")  # силы и флаги в world frame
+
+        com_w = self.object.data.body_com_pos_w[:, 0, 0:3]
+        com   = com_w - self.env_origins
+
+        table_pos = self.table.data.root_pos_w[:, :] - self.env_origins
+        table_top_z = table_pos[:, 2] + 0.05
+
+        # --- обновляем фазу (подъём UR10 скриптом) 
+        self._update_phase_and_scripted_arm(flags, fpose, com, table_top_z)
+
+        # === ФАЗА 0: агент двигает пальцы ИНКРЕМЕНТАЛЬНО (со сглаживанием таргетов)
+        if (self.phase == 0).any():
+            ids = (self.phase == 0).nonzero(as_tuple=False).squeeze(-1)
+
+            self.hand.set_joint_position_target(
+                self.actions[ids], joint_ids=self.hand_joint_ids, env_ids=ids
+            )
+
+        # === ФАЗА 1: пальцы «заморожены» (держим хват)
+        if (self.phase == 1).any():
+            ids = (self.phase == 1).nonzero(as_tuple=False).squeeze(-1)
+            # self.hand.set_joint_position_target(
+            #     self.saved_grasp_targets[ids], joint_ids=self.hand_joint_ids, env_ids=ids
+            # )
+            self.hand.set_joint_position_target(
+                self.actions[ids], joint_ids=self.hand_joint_ids, env_ids=ids
+            )
+
+        # self.hand.set_joint_position_target(
+        #         self.actions, joint_ids=self.hand_joint_ids
+        #     )
 
 # =====================================================================================================
 
@@ -288,12 +343,15 @@ class DeltoEnv(DirectRLEnv):
         object_pos -= self.env_origins
         object_quat = self.object.data.body_link_pose_w[:,0,3:]
 
-        Fw, flags = self._read_contacts(threshold=1.0, frame="w")  # силы и флаги в world frame
+        fforce, flags, fpose = self._read_contacts(threshold=self.contact_treshold, frame="w")  # силы и флаги в world frame
         obs = {
             "joints_pos": self.joint_pos,
             "joints_vel": self.joint_vel,
-            "contact_forces_w": Fw,   # (N,5,3)
+
+            "contact_forces": fforce,   # (N,5,3)
             "contact_flags": flags,   # (N,5) True/False
+            "finger_tips_pos": fpose,
+
             "object_pos": object_pos,
             "object_quat": object_quat
         }
@@ -308,8 +366,40 @@ class DeltoEnv(DirectRLEnv):
 # =====================================================================================================
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
+        """Определяем завершение эпизода по двум причинам:
+        1) Превышение максимальной длины эпизода (truncation)
+        2) Объект наклонён относительно мирового вертикаля сильнее порога cfg.tilt_fail_deg (termination)
 
-        return torch.zeros(self.num_envs, dtype=torch.bool), self.episode_length_buf >= self.max_episode_length
+
+        Вычисление наклона:
+        - берём ориентацию объекта (кватернион world)
+        - применяем его к локальному осевому вектору (0, 0, 1), чтобы получить направление оси Z объекта в мире
+        - угол между этим направлением и мировым e_z даёт наклон
+        """
+        # ориентация первого (root) линка объекта во всех средах, форма (N, 4)
+        obj_quat_w = self.object.data.body_link_pose_w[:, 0, 3:]
+
+        # Локальная ось z объекта в мировых координатах через quat_apply
+        local_z = torch.tensor([0.0, 0.0, 1.0],
+                            device=self.device,
+                            dtype=obj_quat_w.dtype).expand(obj_quat_w.shape[0], 3)
+        
+        # ось Z объекта в мировых координатах, форма (N, 3)
+        obj_z_world = quat_apply(obj_quat_w, local_z)
+
+        # косинус угла между obj_z_world и мировым e_z
+        cos_tilt = torch.clamp((obj_z_world * local_z).sum(dim=-1), -1.0, 1.0)
+        tilt_rad = torch.acos(cos_tilt)
+        tilt_deg = tilt_rad * (180.0 / torch.pi)
+
+
+        # termination по наклону
+        terminations = tilt_deg > self.cfg.tilt_fail_deg
+        # truncation по длине эпизода
+        truncations = self.episode_length_buf >= self.max_episode_length
+
+
+        return terminations, truncations
     
 # =====================================================================================================
 
@@ -325,10 +415,17 @@ class DeltoEnv(DirectRLEnv):
         joint_vel = torch.zeros((len(env_ids), 26), device=self.device)
 
         joint_pos[:, :6] = torch.tensor(self.cfg.start_position, device=self.device)*np.pi/180
+        joint_pos[:, 6:] = torch.tensor(self.cfg.hand_position, device=self.device)*np.pi/180
  
         self.joint_pos[env_ids] = joint_pos
         self.joint_vel[env_ids] = joint_vel
         self.hand.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+
+        self.phase[env_ids] = 0
+        self.phase_step[env_ids] = 0
+        self.lift_hold_ok[env_ids] = 0
+        self.grasp_ok_counter[env_ids] = 0
+        self.slip_counter[env_ids] = 0
 
         with torch.no_grad():
             self.arm_start[env_ids] = self.joint_pos[env_ids][:, self.arm_joint_ids]
@@ -336,6 +433,27 @@ class DeltoEnv(DirectRLEnv):
             self.arm_goal[env_ids]  = self.arm_start[env_ids] + delta
 
         self.hand.set_joint_position_target(self.arm_start[env_ids], joint_ids=self.arm_joint_ids, env_ids=env_ids)
+
+        self._reset_object_on_table(env_ids)
+
+    # =====================================================================================================
+
+    def _reset_object_on_table(self, env_ids):
+
+        root_state = self.object.data.default_root_state[env_ids].clone()
+
+        noise_xy = 0.02 * (torch.rand((len(env_ids), 2), device=self.device) - 0.5)
+        root_state[:, 0] += noise_xy[:, 0]              # x
+        root_state[:, 1] += noise_xy[:, 1]              # y
+
+        # скорости в ноль
+        root_state[:, 7:13] = 0.0
+
+        # добавить сдвиг до центров копий среды
+        root_state[:, 0:3] += self.scene.env_origins[env_ids]
+
+        # записать в физику
+        self.object.write_root_state_to_sim(root_state, env_ids)
 
     
 # ===========================================================================
@@ -356,9 +474,11 @@ class DeltoEnv(DirectRLEnv):
             f = getattr(s.data, attr)  # shape: (N, 3) или (N, H, 3) при history_length>1
             if f.ndim == 3:
                 f = f[:, -1, :]  # берём последний сэмпл истории
-            forces_per_finger.append(f)
 
-        return torch.stack(forces_per_finger, dim=1)  # (N, 5, 3)
+            fnorm = torch.linalg.norm(f, dim=-1)
+            forces_per_finger.append(fnorm)
+
+        return torch.stack(forces_per_finger, dim=1)  # (N, 5)
     
 
     def _read_contact_flags(
@@ -385,5 +505,114 @@ class DeltoEnv(DirectRLEnv):
         forces: (N, 5, 3), flags: (N, 5)
         """
         F = self._read_contact_forces(frame=frame)
-        flags = torch.linalg.norm(F, dim=-1) > threshold
-        return F, flags
+        flags = F > threshold
+
+        ft_pos_w = self.hand.data.body_pos_w[:, self.ft_ids, :]         # (N,5,3) world
+        ft_pos   = ft_pos_w - self.env_origins.unsqueeze(1)
+
+        return F, flags, ft_pos
+    
+# ===========================================================================
+# ===========================================================================
+# ===========================================================================
+
+    def _update_phase_and_scripted_arm(self, flags, ft_pos, com_local, table_top_z):
+        """
+        Управляет переходами фаз и скриптовым подъёмом UR10.
+        """
+        
+        # --- критерий хват-фазы (фаза 0)
+        # 1) достаточно активных пальцев, 2) force-closure высокий, 3) COM близко к центру хвата
+        # fc_score = self._force_closure_score(flags, ft_pos, com_local, 
+        #                                      min_active=self.cfg.grasp_contact_min,
+        #                                      angle_deg=self.cfg.grasp_fc_angle_deg)
+
+        active_cnt = (flags > 0.5).sum(dim=1)
+        # центр хвата (так же как в _get_observations)
+        # w = torch.clamp(flags, min=0.1)
+        # wsum = w.sum(dim=1, keepdim=True)
+        # grasp_center = (ft_pos * w.unsqueeze(-1)).sum(dim=1) / wsum
+        # rel_vec = com_local - grasp_center
+        # rel_dist = torch.linalg.norm(rel_vec, dim=-1)
+
+        grasp_condition = (active_cnt >= self.cfg.grasp_contact_min)
+                        #   (fc_score > 0.5) & \
+                        #   (rel_dist < self.cfg.grasp_max_dist)
+
+        # считаем последовательные шаги с выполненным условием
+        self.grasp_ok_counter = torch.where(
+                                    grasp_condition,
+                                    self.grasp_ok_counter + 1,
+                                    torch.clamp(self.grasp_ok_counter - 2, min=0)
+                                )
+        # --- переход 0 -> 1
+        start_lift_mask = (self.phase == 0) & (self.grasp_ok_counter >= self.cfg.grasp_hold_steps)
+        if start_lift_mask.any():
+            ids = start_lift_mask.nonzero(as_tuple=False).squeeze(-1)
+            # фиксируем цели пальцев (замораживаем хват)
+            self.saved_grasp_targets[ids] = self.hand.data.joint_pos[ids][:, self.hand_joint_ids]
+            # перезапускаем счетчики
+            self.phase[ids] = 1
+            self.phase_step[ids] = 0
+            self.slip_counter[ids] = 0
+            self.lift_hold_ok[ids] = 0
+            # уже записаны arm_start/arm_goal в reset; на подъем просто интерполируем
+
+        # --- если мы в фазе 1 — двигаем руку по линейной интерполяции и следим за «скольжением»
+        in_lift = (self.phase == 1)
+        if self.scripted_lift_enabled and in_lift.any():
+            ids = in_lift.nonzero(as_tuple=False).squeeze(-1)
+            t = (self.phase_step[ids].float() / max(1, self.cfg.lift_steps)).clamp(0, 1).unsqueeze(1)  # (B,1)
+            targ = (1 - t) * self.arm_start[ids] + t * self.arm_goal[ids]                              # (B, n_arm)
+
+            self.hand.set_joint_position_target(
+                targ, joint_ids=self.arm_joint_ids, env_ids=ids
+            )
+
+            # критерий «хват не потерян»: либо контакты держатся, либо объект реально поднят
+            obj_height = (com_local[ids, 2] - table_top_z[ids])  # в метрах
+            good = (active_cnt[ids] >= self.cfg.grasp_contact_min) | (obj_height > self.cfg.success_height)
+            self.slip_counter[ids] = torch.where(good, torch.zeros_like(self.slip_counter[ids]),
+                                                self.slip_counter[ids] + 1)
+
+            self.phase_step[ids] += 1
+    
+    def _force_closure_score(self, flags, ft_pos, com, min_active=2, angle_deg=110.0):
+        """
+        flags: (N,5)  — какие пальцы активны
+        ft_pos:(N,5,3)
+        com:   (N,3)
+        Возвращает скалярный score (N,), 0..1.
+        """
+        N = flags.shape[0]
+        score = torch.zeros(N, device=self.device)
+
+        # направления (N,5,3), нормированные
+        vec = ft_pos - com.unsqueeze(1)                    # к пальцам
+        vec = vec / (torch.norm(vec, dim=-1, keepdim=True) + 1e-8)
+
+        # маска только активных пальцев
+        mask = flags > 0.5                                 # (N,5)
+
+        # для каждой среды посчитаем max попарный угол между активными
+        cos_thr = torch.cos(torch.tensor(angle_deg/180.0*math.pi, device=self.device))
+        for i in range(N):
+            idx = mask[i].nonzero(as_tuple=False).squeeze(-1)
+            if idx.numel() < min_active:
+                score[i] = 0.0
+                continue
+            v = vec[i, idx, :]                             # (k,3)
+            # попарные косинусы углов
+            # cos = v_a · v_b; большой противоположный угол => cos ~ -1
+            cos_mat = (v @ v.t()).clamp(-1.0, 1.0)         # (k,k)
+            # игнор диагональ
+            cos_mat.fill_diagonal_(1.0)
+            min_cos = cos_mat.min()                        # самый "противоположный" косинус
+            # если есть пара с cos < cos_thr (т.е. угол > angle_deg), считаем OK
+            s = torch.sigmoid(10.0*(cos_thr - min_cos))    # плавный переход
+            score[i] = s
+
+        return score  # (N,), 0..1
+
+
+

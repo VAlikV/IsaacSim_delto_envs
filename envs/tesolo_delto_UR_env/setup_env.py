@@ -58,7 +58,10 @@ if __name__ == "__main__":
     #       0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0,
     #       -1.0, 0.0, -3.0, -3.0]])
     
-    pos = torch.zeros([env.cfg.num_env, env.cfg.action_space])*0.3
+    pos = torch.zeros([env.cfg.num_env, env.cfg.action_space])
+
+    pos[:,0] = 30*np.pi/180
+    pos[:,5] = -50*np.pi/180
 
     while(True):
         
@@ -79,7 +82,10 @@ if __name__ == "__main__":
 
         obs, rewards, dones, info, _ = env.step(pos)
 
-        print("Obs: ", obs["state"]["object_pos"])
+        print("Obj pos: ", obs["state"]["object_pos"])
+        print("Forces: ", obs["state"]["contact_forces"])
+        print("Flags: ", obs["state"]["contact_flags"])
+        print("Tips pos: ", obs["state"]["finger_tips_pos"])
 
         # print("Joints_pose:", obs["state"]["joints_pos"])
         print("====================================")
