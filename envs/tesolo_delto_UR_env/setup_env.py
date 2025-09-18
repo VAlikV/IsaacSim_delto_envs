@@ -60,9 +60,6 @@ if __name__ == "__main__":
     
     pos = torch.zeros([env.cfg.num_env, env.cfg.action_space])
 
-    pos[:,0] = 30*np.pi/180
-    pos[:,5] = -50*np.pi/180
-
     while(True):
         
         try:
@@ -70,11 +67,8 @@ if __name__ == "__main__":
 
             data = list(map(float, (str(data)[3:-2].split(", "))))
 
-            data[0] += 30*np.pi/180
-            data[5] -= 50*np.pi/180
-
             print(data)
-            pos = torch.tensor([data])
+            pos[:,0:20] = torch.tensor(data)
             
         except BlockingIOError:
             # данных пока нет
@@ -82,12 +76,14 @@ if __name__ == "__main__":
 
         obs, rewards, dones, info, _ = env.step(pos)
 
-        print("Obj pos: ", obs["state"]["object_pos"])
-        print("Forces: ", obs["state"]["contact_forces"])
-        print("Flags: ", obs["state"]["contact_flags"])
-        print("Tips pos: ", obs["state"]["finger_tips_pos"])
+        # print("Joints pos: ", obs["state"]["joints_pos"])
+        # print("Obj pos: ", obs["state"]["object_pos"])
+        # print("Forces: ", obs["state"]["contact_forces"])
+        # print("Flags: ", obs["state"]["contact_flags"])
+        # print("Tips pos: ", obs["state"]["finger_tips_pos"])
+        # print("Hand open: ", obs["state"]["hand_open"])
+        print("Reward", rewards)
 
-        # print("Joints_pose:", obs["state"]["joints_pos"])
         print("====================================")
 
         time.sleep(0.05)

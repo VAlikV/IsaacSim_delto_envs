@@ -26,11 +26,11 @@ DELTO_CFG = ArticulationCfg(
             # sleep_threshold=0.005,
             # stabilization_threshold=0.0005,
         ),
-        collision_props=sim_utils.CollisionPropertiesCfg(
-            collision_enabled=True,
-            contact_offset=0.002,  # отступ для генерации контактов
-            rest_offset=0.0,       # убрать "воздушный зазор"
-        ),
+        # collision_props=sim_utils.CollisionPropertiesCfg(
+        #     collision_enabled=True,
+        #     contact_offset=0.002,  # отступ для генерации контактов
+        #     rest_offset=0.0,       # убрать "воздушный зазор"
+        # ),
         joint_drive_props=sim_utils.JointDrivePropertiesCfg(drive_type="force"),
     ),
 
