@@ -35,3 +35,7 @@ IsaacLab envs with tesolo delto for RL and control experiments
 2. `robots/` - usd файлы роботов
 
 3. `scripts` - скрипты для управленяи
+
+This project uses USD models from:
+https://github.com/tesollodelto/delto_m_ros2
+Licensed under BSD-3-Clause.
