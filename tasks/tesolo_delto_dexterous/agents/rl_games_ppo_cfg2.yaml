@@ -43,7 +43,7 @@ params:
   load_path: '' # path to the checkpoint to load
 
   config:
-    name: reorient
+    name: grasp
     env_name: rlgpu
     device: 'cuda:0'
     device_name: 'cuda:0'
@@ -80,6 +80,30 @@ params:
     clip_actions: False
     seq_len: 4
     bounds_loss_coef: 0.0001
+
+    # Privileged critic consumes env observations under the "critic" key.
+    central_value_config:
+      minibatch_size: 36864
+      mini_epochs: 5
+      learning_rate: 1e-3
+      lr_schedule: adaptive
+      schedule_type: legacy
+      kl_threshold: 0.01
+      clip_value: True
+      normalize_input: True
+      truncate_grads: True
+
+      network:
+        name: actor_critic
+        central_value: True
+        mlp:
+          units: [512, 256, 128]
+          activation: elu
+          d2rl: False
+          initializer:
+            name: default
+          regularizer:
+            name: None
 
 pbt:
   enabled: False

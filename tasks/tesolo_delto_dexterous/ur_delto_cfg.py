@@ -7,12 +7,10 @@ from isaaclab.assets import ArticulationCfg
 from isaaclab.actuators import ImplicitActuatorCfg
 
 
-
-
 DELTO_CFG = ArticulationCfg(
     # prim_path = "/World/envs/env_.*/Robot",
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"robots/dg5f_right/ur10e_delto_optimized_separate_tips.usd",
+        usd_path=f"robots/ur10e_delto.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -20,7 +18,7 @@ DELTO_CFG = ArticulationCfg(
             # max_depenetration_velocity=1000.0,
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=False,
+            enabled_self_collisions=True,
             solver_position_iteration_count=32,
             solver_velocity_iteration_count=1,
             # sleep_threshold=0.005,

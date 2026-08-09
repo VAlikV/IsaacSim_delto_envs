@@ -10,10 +10,10 @@ import torch
 import trimesh
 from trimesh.sample import sample_surface
 
-import isaacsim.core.utils.prims as prim_utils
 from pxr import UsdGeom
 
 from isaaclab.sim.utils import get_all_matching_child_prims
+from isaaclab.sim.utils.stage import get_current_stage
 from isaaclab.utils.math import quat_apply
 
 # ---- module-scope caches ----
@@ -70,7 +70,7 @@ def sample_object_point_cloud(num_envs: int, num_points: int, prim_path: str, de
         if not prims:
             raise KeyError(f"No valid prims under {obj_path}")
 
-        object_prim = prim_utils.get_prim_at_path(obj_path)
+        object_prim = get_current_stage().GetPrimAtPath(obj_path)
         world_root = xform_cache.GetLocalToWorldTransform(object_prim)
 
         # hash each child prim by its rel transform + geometry
