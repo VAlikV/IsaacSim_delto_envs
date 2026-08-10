@@ -9,6 +9,8 @@ IsaacLab envs with tesolo delto for RL and control experiments
 
 3. Переместить файлы из `tasks/` в `<директория IsaacLab>/source/isaaclab_tasks/isaaclab_tasks/direct`
 
+4. Распаковать архив с весами из `weights/` в `<директория IsaacLab>/logs/rl_games/`
+
 ## Запуск среды
 
 ```bash
@@ -19,14 +21,18 @@ IsaacLab envs with tesolo delto for RL and control experiments
 
 ```bash
 # Train
-./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py --task Isaac-Tesolo-Delto-Direct-D --headless --num_envs 2048 --wandb-entity rubitek_dextrous --wandb-project-name RubetekDextorousDirectEnv --wandb-name UR10-Tessolo-v21-ForceRew --track
+./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py --task <TASK_NAME> --headless --num_envs 4096 --wandb-entity rubitek_dextrous --wandb-project-name RubetekDextorousDirectEnv --wandb-name UR10-Tessolo-v21-ForceRew --track
+
+./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py --task <TASK_NAME> --num_envs 4096 --headless
 
 # Val
-./isaaclab.sh -p scripts/reinforcement_learning/rl_games/play.py --task Isaac-Tesolo-Delto-Direct-D --num_envs 3
-```
-## Загрузка весов
+./isaaclab.sh -p scripts/reinforcement_learning/rl_games/play.py --task <TASK_NAME> --num_envs 16
 
-Распаковать `reorient.zip` в `<директория IsaacLab>/logs/rl_games/`
+```
+
+Флаги:
+- `--checkpoint /ABS/PATH/TO/nn/last.pth`
+- `--video --video_length 1000 --video_fps 30`
 
 ## Описание
 
